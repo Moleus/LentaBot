@@ -20,7 +20,6 @@ WHITELIST = [
 class LentaBot():
 
     TOKEN = os.environ.get('TELEGRAM_API_TOKEN') 
-    
 
     def __init__(self):
         print("LentaBot started")
@@ -38,11 +37,11 @@ class LentaBot():
         
         self.good_by_user = {}  # by users' ids  {user_id1: {url1: primary_price, url2: primary_price}, 
                                 #                {user_id2: {url1: primary_price, url2: primary_price}} 
-        WAIT_TIME_SECONDS = 1 * 60 * 60
+        #WAIT_TIME_SECONDS = 1 * 60 * 60
 
-        ticker = threading.Event()
-        while not ticker.wait(WAIT_TIME_SECONDS):
-            self.checking_for_sales()
+        #ticker = threading.Event()
+        #while not ticker.wait(WAIT_TIME_SECONDS):
+        #    self.checking_for_sales()
         
         dp = updater.dispatcher
         dp.add_handler(CommandHandler('start', self.start))
@@ -57,9 +56,25 @@ class LentaBot():
                                                     из каталога: https://lenta.com/catalog ')
     #def send_msg(self, user_id, text):
     #    context.bot.send_message(user_id, text=text)  # in plans
-                  
+                 
+    def setInterval(interval):
+        def decorator(function):
+            def wrapper(*args, **kwargs):
+                stopped = threading.Event()
 
-    def take_good_info(self, url, city_url=None):
+                def loop(): # executed in another thread
+                    while not stopped.wait(interval): # until stopped
+                        function(*args, **kwargs)
+
+                t = threading.Thread(target=loop)
+                t.daemon = True # stop if the program exits
+                t.start()
+                return stopped
+            return wrapper
+        return decorator
+
+
+    def take_good_info(self,url, city_url=None):
         print(url+ '\n')
         #print(self.default_city_url)
         print(self.headers)
@@ -84,11 +99,13 @@ class LentaBot():
         if keep == False:
             del self.good_by_user[user_id][url]  
 
+
     def sale_found(url):
         user_id = self.good_by_user[url]
         context.bot.send_message(update.message.user_id, text=u'товар: %s .\n Текущая цена: %s' % (title, price))         
 
 
+    @setInterval(15)
     def checking_for_sales(self):
         print("checking")
         for user_id in self.good_by_user:
@@ -99,18 +116,24 @@ class LentaBot():
                 if ((starting_price - price) / starting_price) > 0.15:
                    sale_found(url)                                         
 
+
     def main(self, update, context):
         print('main method: "%s"' % update.message.text)
         url = update.message.text
+        print(url)
         user_id = update.message.chat_id
+        print(user_id)
 
         if not url.startswith(WHITELIST[0]):
+            print("not in list")
             context.bot.send_message(update.message.chat_id, text=u'данная ссылка не является каталогом ленты')
             return
 
         if url not in self.good_by_user[user_id]:        
+            print("adding")
+            print(self.good_by_user[user_id])
             self.good_by_user[user_id] = self.good_by_user[user_id].append(url)
-            starting_price = self.take_good_info(url)[1]
+            print("added")
             self.good_by_user[user_id][url] = starting_price
         
         message = context.bot.send_message(update.message.chat_id, text="%s" % starting_price)
