@@ -1,2 +1,6 @@
-env/
-price_parser.py
+*
+# env/
+# price_parser.py
+
+!Bot.py
+!requirements.txt
