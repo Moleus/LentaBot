@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
 import os
 import telegram
 from telegram import (
@@ -23,13 +27,14 @@ import threading
 import itertools
 import re
 
-from dotenv import load_dotenv   # for passing telegram token from .env 
-load_dotenv()                    
+from dotenv import load_dotenv   # for passing telegram token from .env
+load_dotenv()
 
 SITE_WHITELIST = [
     'https://lenta.com/catalog/'
 ]
 
+USE_PROXY = True
 CHECK_PRICE_PERIOD = 500  # minutes
 CITY, STORE = range(2)
 GOOD_LIST, DELGOOD = range(2)
@@ -62,15 +67,18 @@ class LentaBot():
     Allows you to track sales on different goods by sending them to this bot.
     """
 
-    # Put your telegram token in .env file 
+    # Put your telegram token in .env file
     TOKEN = os.environ.get('TELEGRAM_API_TOKEN')
 
     def __init__(self):
         print("LentaBot started")
+        
+        PROXY_URL = None
+        if USE_PROXY:
+            PROXY_URL = {'proxy_url': 'socks5h://192.168.1.114:9050/'}    # use proxy if tg is blocked in your country.
+
         updater = Updater(self.TOKEN,
-                          request_kwargs={
-                              'proxy_url': 'socks5h://192.168.1.114:9050/',
-                          },
+                          request_kwargs=PROXY_URL,
                           use_context=True)
 
         stores_url = "https://lenta.com/api/v1/stores"
@@ -81,9 +89,9 @@ class LentaBot():
         self.cities = self.get_json_from_url(cities_url)
         self.stores = self.get_json_from_url(stores_url)
 
-        self.user_pos = {}
-        self.goods_per_msg = 5
+        self.GOODS_PER_MESSAGE = 5  # amount of customer's goods shows in one message.
 
+        self.user_pos = {}
         self.first_time = True
 
         if os.path.isfile('./good_urls.json'):
@@ -98,7 +106,6 @@ class LentaBot():
         else:
             self.users_stores = {}
 
-        self.goods_by_msg = 5
 
         dp = updater.dispatcher
 
@@ -368,7 +375,7 @@ class LentaBot():
         """
         query = update.callback_query
         user_id = str(query.message.chat_id)
-        new_pos = self.user_pos[user_id] - self.goods_per_msg
+        new_pos = self.user_pos[user_id] - self.GOODS_PER_MESSAGE
 
         if new_pos >= 0:
             self.user_pos[user_id] = new_pos
@@ -383,7 +390,7 @@ class LentaBot():
         """
         query = update.callback_query
         user_id = str(query.message.chat_id)
-        new_pos = self.user_pos[user_id] + self.goods_per_msg
+        new_pos = self.user_pos[user_id] + self.GOODS_PER_MESSAGE
         if len(self.json_goods_data[user_id]) > new_pos:
             self.user_pos[user_id] = new_pos
         self.send_user_goods(update, context)
@@ -414,7 +421,7 @@ class LentaBot():
         del_buttons_list = []
 
         start = self.user_pos[user_id]
-        end = self.user_pos[user_id] + self.goods_per_msg
+        end = self.user_pos[user_id] + self.GOODS_PER_MESSAGE
         sliced_dict = dict(itertools.islice(self.json_goods_data[user_id].items(), start, end))
 
         for num, url in enumerate(sliced_dict):
@@ -440,7 +447,7 @@ class LentaBot():
         goods_text = ""
 
         start = self.user_pos[user_id]
-        end = self.user_pos[user_id] + self.goods_per_msg
+        end = self.user_pos[user_id] + self.GOODS_PER_MESSAGE
 
         if user_id not in self.json_goods_data.keys():
             return None
