@@ -1,6 +1,5 @@
-*
-# env/
-# price_parser.py
-
-!Bot.py
-!requirements.txt
+env/
+dev/
+.env
+good_urls.json
+users_stores.json
