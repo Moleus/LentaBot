@@ -46,8 +46,8 @@ logFormatter = logging.Formatter("%(asctime)s \
                                  %(messages)")
 logger = logging.getLogger()
 
-# logging level. ('INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL/FATAL')
-logger.setLevel('INFO')
+# logging level ('INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL/FATAL')
+logger.setLevel('ERROR')
 
 # save logs in ./logs dir.
 if not os.path.isdir('./logs'):
