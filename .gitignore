@@ -1,6 +1,6 @@
 env/
 dev/
-.env
 good_urls.json
 users_stores.json
 logs/
+.*
