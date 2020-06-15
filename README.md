@@ -4,7 +4,7 @@ This Bot was created to help people with tracking disounts for their favourite g
 ## Install
 1. Clone this repo `git clone https://github.com/Moleus/LentaBot`.
 2. Install the requirements `pip3 install -r requirements.txt`.
-3. Create .env file and put your Telegram Bot TOKEN there.
+3. Create .env file and put your [Telegram Bot TOKEN](https://core.telegram.org/bots#3-how-do-i-create-a-bot) there.
 4. Run the Bot `python3 Bot.py`
 
 ## Usage
