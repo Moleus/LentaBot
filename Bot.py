@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 
@@ -33,21 +32,17 @@ load_dotenv()
 SITE_WHITELIST = [
     'https://lenta.com/catalog/'
 ]
-
 USE_PROXY = True
 CHECK_PRICE_PERIOD = 500  # minutes
-CITY, STORE = range(2)
+CITY, TYPE_STORE_NAME, CHOOSE_STORE, CHOICE_FIN = range(4)
 GOOD_LIST, DELGOOD = range(2)
 
 #  log messages format
-logFormatter = logging.Formatter("%(asctime)s \
-                                 [%(threadName)-12.12s] \
-                                 [%(levelname)-5.5s] \
-                                 %(messages)")
+logFormatter = logging.Formatter("%(asctime)s - [%(threadName)-12.12s] - [%(levelname)-5.5s] - %(message)s")
 logger = logging.getLogger()
 
 # logging level ('INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL/FATAL')
-logger.setLevel('ERROR')
+logger.setLevel('INFO')
 
 # save logs in ./logs dir.
 if not os.path.isdir('./logs'):
@@ -62,7 +57,7 @@ consoleHandler.setFormatter(logFormatter)
 logger.addHandler(consoleHandler)
 
 
-class LentaBot():
+class LentaBot:
     """
     Allows you to track sales on different goods by sending them to this bot.
     """
@@ -71,7 +66,7 @@ class LentaBot():
     TOKEN = os.environ.get('TELEGRAM_API_TOKEN')
 
     def __init__(self):
-        print("LentaBot started")
+        print("\033[92m LentaBot started \033[0m")
         
         PROXY_URL = None
         if USE_PROXY:
@@ -80,14 +75,14 @@ class LentaBot():
         updater = Updater(self.TOKEN,
                           request_kwargs=PROXY_URL,
                           use_context=True)
-
+    
         stores_url = "https://lenta.com/api/v1/stores"
         cities_url = "https://lenta.com/api/v1/cities"
         self.headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.117 Safari/537.36"
         }
-        self.cities = self.get_json_from_url(cities_url)
-        self.stores = self.get_json_from_url(stores_url)
+        self.cities_dict = self.get_json_from_url(cities_url)
+        self.stores_dict = self.get_json_from_url(stores_url)
 
         self.GOODS_PER_MESSAGE = 5  # amount of customer's goods shows in one message.
 
@@ -105,7 +100,6 @@ class LentaBot():
                 self.users_stores = json.load(f)
         else:
             self.users_stores = {}
-
 
         dp = updater.dispatcher
 
@@ -126,12 +120,14 @@ class LentaBot():
         )
 
         store_handler = ConversationHandler(
-            entry_points=[CommandHandler(['start', 'choose_store'], self.choose_city)],
+            entry_points=[CommandHandler(['start', 'choose_store'], self.type_city_request)],
             states={
-                CITY: [CallbackQueryHandler(self.choose_store, pattern="^" + "city")],
-                STORE: [CallbackQueryHandler(self.choose_end, pattern="^" + "\d{4}"+"$")]
+                CITY:            [MessageHandler(Filters.text, self.search_city)],
+                TYPE_STORE_NAME: [CallbackQueryHandler(self.type_store_request)],     
+                CHOOSE_STORE:    [MessageHandler(Filters.text, self.search_store)],
+                CHOICE_FIN:      [CallbackQueryHandler(self.choose_end, pattern="^" + "\d{4}"+"$")]
             },
-            fallbacks=[CommandHandler(['start', 'choose_store'], self.choose_city)]
+            fallbacks=[CommandHandler('choose_store', self.type_city_request)]
         )
 
         dp.add_handler(CommandHandler('help', self.manual))
@@ -155,7 +151,7 @@ class LentaBot():
 
     def get_json_from_url(self, url):
         """
-        For self.stores and self.cities jsons
+        For self.stores_dict and self.cities_dict jsons
         """
         with requests.Session() as s:
             text_data = s.get(url, headers=self.headers).text
@@ -188,46 +184,111 @@ class LentaBot():
             menu.append([footer_buttons])
         return menu
 
-    def choose_city(self, update, context):
+    def type_city_request(self, update, context):
+        context.bot.send_message(
+            update.message.chat_id,
+            text="Напишите название Вашего города",    
+        )
+        return CITY
+
+    def search_requested(self, required_place, places_dict):
+        """
+        Search a city or a store by typing it's name.
+        """
+        logger.info("search: message is %s", required_place)
+        required_places = {}
+        for num, city in enumerate(places_dict):
+            if required_place.lower() in places_dict[num]['name'].lower():
+                required_places.update({num: places_dict[num]})
+        logger.info("search: dict is %s", required_places) 
+        if len(required_places) == 0:
+            logger.info("not found")
+            return None
+        return required_places
+
+    def search_city(self, update, context):
+        message_text = update.message.text
+        logger.info("search city message is %s", message_text)
+        required_cities = self.search_requested(message_text, self.cities_dict)
+        if required_cities is not None:
+            self.choose_city(update, context, required_cities)
+            return TYPE_STORE_NAME 
+        else:
+            self.request_not_found(update, context)
+            return ConversationHandler.END
+
+
+    def request_not_found(self, update, context):
+        context.bot.send_message(
+            update.message.chat_id,
+            text="По Вашему запросу ничего не найдено."
+        )
+
+    def choose_city(self, update, context, cities_dict=None):
         """
         Buttons with option to choose your city from list.
         """
+        cities_dict = cities_dict if cities_dict else self.cities_dict
+        # logger.info("choose city: cities_dict is %s", cities_dict)
+        # logger.info("choose city: %s %s", "message is", update.message.text)
         button_list = []
-        for num, city in enumerate(self.cities):
-            name = city["name"]
-            short_name = city["id"]
-            button_list.append(InlineKeyboardButton(name, callback_data="city " + short_name))
+        for city in cities_dict:
+            logger.info("choose city: %s", city)
+            logger.info("choose city: CITIES: %s", cities_dict[city])
+            name = cities_dict[city]["name"]
+            short_name = cities_dict[city]["id"]
+            button_list.append(InlineKeyboardButton(name, callback_data="store " + short_name))
 
+        # query = update.callback_query
         reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
         update.message.reply_text('Choose city:', reply_markup=reply_markup)
-        return CITY
+        return TYPE_STORE_NAME 
 
-    def choose_store(self, update, context):
-        """
-        Buttons with option to choose your store from list.
-        """
+    def type_store_request(self, update, context):
         query = update.callback_query
-        button_list = []
-
-        for store in self.stores:
-            name = store["name"]
-            store_id = store["id"]
-            store_key = store["cityKey"]
-
-            callback_city = query.data
-            if store_key == callback_city.split(" ")[1]:
-                button_list.append(InlineKeyboardButton(name, callback_data=store_id))
-
-        reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
-
+        logger.info("type store request")
         context.bot.edit_message_text(
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
-            text="Choose store",
+            text="Напишите название улицы Вашего магазина.",    
+          )
+        return CHOOSE_STORE
+
+    def search_store(self, update, context):
+        message_text = update.message.text
+        required_stores = self.search_requested(message_text, self.stores_dict)
+        if required_stores is not None:
+            self.choose_store(update, context, required_stores)
+            return CHOICE_FIN
+        else:
+            self.request_not_found(update, context)
+            return ConversationHandler.END
+
+    def choose_store(self, update, context, stores_dict=None):
+        """
+        Buttons with option to choose your store from list.
+        """
+        # logger.info("choose store: %s", "started")
+        stores_dict = stores_dict if stores_dict else self.stores_dict
+        # logger.info("choose store: dict is  %s", stores_dict)
+        # query = update.callback_query
+        # query = update.message
+        button_list = []
+
+        for store in stores_dict:
+            logger.info("choose store: name is  %s", store)
+            logger.info("choose store: NAME is  %s", stores_dict[store]['name'])
+            name = stores_dict[store]["name"]
+            store_id = stores_dict[store]["id"]
+            button_list.append(InlineKeyboardButton(name, callback_data=store_id))
+
+        reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
+
+        context.bot.send_message(
+            chat_id=update.message.chat_id,
+            text="Выбирите магазин.",
             reply_markup=reply_markup
         )
-
-        return STORE
 
     def choose_end(self, update, context):
         """
@@ -238,6 +299,7 @@ class LentaBot():
         for lists in query.message.reply_markup.inline_keyboard:
             for element in lists:
                 if query.data in element['callback_data']:
+                    logger.info("test")
                     store_name = element["text"]
                     break
 
@@ -250,8 +312,6 @@ class LentaBot():
             message_id=query.message.message_id,
             text="Ваш магазин '%s'\nСкиньте ссылку на товар" % store_name
         )
-
-        return ConversationHandler.END
 
     def save_users_stores(self):
         """
@@ -588,7 +648,7 @@ class LentaBot():
         Sends message if sale is found.
         Toggles the isPromoForCardPrice and repeatNotif flags.
         """
-        logger.info("FOR SALES")
+        logger.info("checking for sales: %s", "checking")
         for user_id in list(self.json_goods_data.keys()):
             for url in list(self.json_goods_data[user_id].keys()):
                 try:
@@ -596,7 +656,6 @@ class LentaBot():
                     page_text = self.take_page_text(url, user_id)
                     new_good_info = self.get_new_good_info(page_text)
                     if new_good_info:
-                        logger.warning(f'info block: \n {new_good_info} \n')
                         repeatNotif = self.json_goods_data[user_id][url]["repeatNotif"]
                         prev_isPromoForCardPrice = self.json_goods_data[user_id][url]["isPromoForCardPrice"]
                         isPromoForCardPrice = new_good_info["isPromoForCardPrice"]
@@ -662,8 +721,8 @@ class LentaBot():
         """
         Error handler.
         """
-        logger.error('Update "%s" caused error "%s"', update, context.error)
+        logger.error('Update "%s" caused error "%s"'% (update, context.error))
 
 
-if __name__ == "__main__":
-    bot = LentaBot()
+if __name__ == '__main__':
+    Bot = LentaBot()
