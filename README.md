@@ -9,7 +9,7 @@ This Bot was created to help people with tracking disounts for their favourite g
 
 ## Usage
 I. Basic
-   1. Choose your city and store: `/choose_store`
+   1. Choose your city and store: `/choose_store`.
    2. Go to [Lenta Catalog site](https://lenta.com/catalog/).
    3. Choose a good you like and copy it's url. For example, [appples](https://lenta.com/catalog/frukty-i-ovoshchi/frukty/yabloki/yabloki-golden-fas-ves-1kg/).
    4. Send this url to the Bot.
