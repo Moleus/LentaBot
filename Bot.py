@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 
@@ -32,7 +33,7 @@ load_dotenv()
 SITE_WHITELIST = [
     'https://lenta.com/catalog/'
 ]
-USE_PROXY = True
+USE_PROXY = False
 CHECK_PRICE_PERIOD = 500  # minutes
 CITY, TYPE_STORE_NAME, CHOOSE_STORE, CHOICE_FIN = range(4)
 GOOD_LIST, DELGOOD = range(2)
@@ -67,7 +68,7 @@ class LentaBot:
 
     def __init__(self):
         print("\033[92m LentaBot started \033[0m")
-        
+
         PROXY_URL = None
         if USE_PROXY:
             PROXY_URL = {'proxy_url': 'socks5h://192.168.1.114:9050/'}    # use proxy if tg is blocked in your country.
@@ -75,7 +76,7 @@ class LentaBot:
         updater = Updater(self.TOKEN,
                           request_kwargs=PROXY_URL,
                           use_context=True)
-    
+
         stores_url = "https://lenta.com/api/v1/stores"
         cities_url = "https://lenta.com/api/v1/cities"
         self.headers = {
@@ -123,7 +124,7 @@ class LentaBot:
             entry_points=[CommandHandler(['start', 'choose_store'], self.type_city_request)],
             states={
                 CITY:            [MessageHandler(Filters.text, self.search_city)],
-                TYPE_STORE_NAME: [CallbackQueryHandler(self.type_store_request)],     
+                TYPE_STORE_NAME: [CallbackQueryHandler(self.type_store_request)],
                 CHOOSE_STORE:    [MessageHandler(Filters.text, self.search_store)],
                 CHOICE_FIN:      [CallbackQueryHandler(self.choose_end, pattern="^" + "\d{4}"+"$")]
             },
@@ -187,7 +188,7 @@ class LentaBot:
     def type_city_request(self, update, context):
         context.bot.send_message(
             update.message.chat_id,
-            text="Напишите название Вашего города",    
+            text="В каком Вы городе?",
         )
         return CITY
 
@@ -200,7 +201,7 @@ class LentaBot:
         for num, city in enumerate(places_dict):
             if required_place.lower() in places_dict[num]['name'].lower():
                 required_places.update({num: places_dict[num]})
-        logger.info("search: dict is %s", required_places) 
+        logger.info("search: dict is %s", required_places)
         if len(required_places) == 0:
             logger.info("not found")
             return None
@@ -212,11 +213,10 @@ class LentaBot:
         required_cities = self.search_requested(message_text, self.cities_dict)
         if required_cities is not None:
             self.choose_city(update, context, required_cities)
-            return TYPE_STORE_NAME 
+            return TYPE_STORE_NAME
         else:
             self.request_not_found(update, context)
             return ConversationHandler.END
-
 
     def request_not_found(self, update, context):
         context.bot.send_message(
@@ -241,8 +241,8 @@ class LentaBot:
 
         # query = update.callback_query
         reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
-        update.message.reply_text('Choose city:', reply_markup=reply_markup)
-        return TYPE_STORE_NAME 
+        update.message.reply_text('Выбирите город', reply_markup=reply_markup)
+        return TYPE_STORE_NAME
 
     def type_store_request(self, update, context):
         query = update.callback_query
@@ -250,8 +250,8 @@ class LentaBot:
         context.bot.edit_message_text(
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
-            text="Напишите название улицы Вашего магазина.",    
-          )
+            text="На какой улице Ваш магазин?",
+        )
         return CHOOSE_STORE
 
     def search_store(self, update, context):
@@ -573,11 +573,11 @@ class LentaBot:
             try:
                 context.bot.edit_message_text(text,
                                               chat_id=query.message.chat_id,
-                                              jessage_id=query.message.message_id,
+                                              message_id=query.message.message_id,
                                               reply_markup=reply_markup,
                                               disable_web_page_preview=True,
                                               parse_mode='HTML')
-            except:
+            except telegram.error.BadRequest: # if there is no message to edit
                 context.bot.answer_callback_query(update.callback_query.id,
                                                   text="there's no {} page.".format(query.data))
         return GOOD_LIST
