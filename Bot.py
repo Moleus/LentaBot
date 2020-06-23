@@ -34,7 +34,7 @@ SITE_WHITELIST = [
     'https://lenta.com/catalog/'
 ]
 USE_PROXY = False
-CHECK_PRICE_PERIOD = 500  # minutes
+CHECK_PRICE_PERIOD = 0.5  # minutes
 CITY, TYPE_STORE_NAME, CHOOSE_STORE, CHOICE_FIN = range(4)
 GOOD_LIST, DELGOOD = range(2)
 
@@ -675,7 +675,14 @@ class LentaBot:
                         elif isPromoForCardPrice != prev_isPromoForCardPrice and isPromoForCardPrice is False:
                             self.update_goods_data(user_id, url, new_good_info, repeatNotif=True)
                             # {"title": title, "price": price, "promoDate": "", "isPromoForCardPrice": False}
-
+                    else:
+                        logger.debug(url)
+                        good_title = self.json_goods_data[user_id][url]["title"]
+                        losted_good_info = {"title": good_title + " ТОВАР ПРОПАЛ!", "price": 0, "promoDate": "", "isPromoForCardPrice": False}
+                        self.update_goods_data(user_id, url, losted_good_info)
+                        context.bot.send_message(chat_id=int(user_id),
+                                                 text=f'Товар "{good_title}" пропал с сайта.\n'
+                                                       'Проверьте, что ссылка ещё действительна.')
                 except Exception:
                     logger.exception("message")
 
