@@ -34,7 +34,7 @@ SITE_WHITELIST = [
     'https://lenta.com/catalog/'
 ]
 USE_PROXY = False
-CHECK_PRICE_PERIOD = 0.5  # minutes
+CHECK_PRICE_PERIOD = 300  # minutes
 CITY, TYPE_STORE_NAME, CHOOSE_STORE, CHOICE_FIN = range(4)
 GOOD_LIST, DELGOOD = range(2)
 
@@ -242,7 +242,6 @@ class LentaBot:
         # query = update.callback_query
         reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
         update.message.reply_text('Выбирите город', reply_markup=reply_markup)
-        return TYPE_STORE_NAME
 
     def type_store_request(self, update, context):
         query = update.callback_query
@@ -312,6 +311,7 @@ class LentaBot:
             message_id=query.message.message_id,
             text="Ваш магазин '%s'\nСкиньте ссылку на товар" % store_name
         )
+        return ConversationHandler.END
 
     def save_users_stores(self):
         """
@@ -678,7 +678,9 @@ class LentaBot:
                     else:
                         logger.debug(url)
                         good_title = self.json_goods_data[user_id][url]["title"]
-                        losted_good_info = {"title": good_title + " ТОВАР ПРОПАЛ!", "price": 0, "promoDate": "", "isPromoForCardPrice": False}
+                        if "ТОВАР ПРОПАЛ" not in good_title:
+                            good_title += "ТОВАР ПРОПАЛ" 
+                        losted_good_info = {"title": good_title, "price": 0, "promoDate": "", "isPromoForCardPrice": False}
                         self.update_goods_data(user_id, url, losted_good_info)
                         context.bot.send_message(chat_id=int(user_id),
                                                  text=f'Товар "{good_title}" пропал с сайта.\n'

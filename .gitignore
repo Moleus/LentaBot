@@ -4,3 +4,5 @@ good_urls.json
 users_stores.json
 logs/
 .*
+__pycache__
+__idea__
