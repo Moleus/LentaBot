@@ -36,7 +36,7 @@ SITE_WHITELIST = [
     'https://lenta.com/catalog/'
 ]
 USE_PROXY = False
-CHECK_PRICE_PERIOD = 0.5  # minutes
+CHECK_PRICE_PERIOD = 500  # minutes
 CITY, TYPE_STORE_NAME, CHOOSE_STORE, CHOICE_FIN = range(4)
 GOOD_LIST, DELGOOD = range(2)
 
