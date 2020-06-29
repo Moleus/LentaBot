@@ -2,6 +2,11 @@
 # -*- coding: utf-8 -*-
 
 
+# Bot's work modules
+import replies    # send cliched message to a user.
+import filesoper  # save/load operations with files.
+import lenta_api  # requests to lenta.com 
+
 import os
 import telegram
 from telegram import (
@@ -19,16 +24,13 @@ from telegram.ext import (
 from telegram.error import Unauthorized
 import logging
 
-import requests
-from bs4 import BeautifulSoup
-import json
-
 import threading
 import itertools
-import re
+import time
 
 from dotenv import load_dotenv   # for passing telegram token from .env
 load_dotenv()
+
 
 SITE_WHITELIST = [
     'https://lenta.com/catalog/'
@@ -43,7 +45,7 @@ logFormatter = logging.Formatter("%(asctime)s - [%(threadName)-12.12s] - [%(leve
 logger = logging.getLogger()
 
 # logging level ('INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL/FATAL')
-logger.setLevel('INFO')
+logger.setLevel('DEBUG')
 
 # save logs in ./logs dir.
 if not os.path.isdir('./logs'):
@@ -60,7 +62,7 @@ logger.addHandler(consoleHandler)
 
 class LentaBot:
     """
-    Allows you to track sales on different goods by sending them to this bot.
+    Allows you to track discounts on different goods by sending them to this bot.
     """
 
     # Put your telegram token in .env file
@@ -77,30 +79,27 @@ class LentaBot:
                           request_kwargs=PROXY_URL,
                           use_context=True)
 
-        stores_url = "https://lenta.com/api/v1/stores"
-        cities_url = "https://lenta.com/api/v1/cities"
-        self.headers = {
+        CITIES_URL = "https://lenta.com/api/v1/cities"
+        STORES_URL = "https://lenta.com/api/v1/stores"
+        self.HEADERS = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.117 Safari/537.36"
         }
-        self.cities_dict = self.get_json_from_url(cities_url)
-        self.stores_dict = self.get_json_from_url(stores_url)
+        self.stores_dict = []
+        self.cities_dict = []
+        while self.stores_dict == [] and self.cities_dict == []:  # if site is updating, so we can't get the cities or stores.
+            self.stores_dict = lenta_api.get_json_from_url(STORES_URL, self.HEADERS)
+            self.cities_dict = lenta_api.get_json_from_url(CITIES_URL, self.HEADERS)
+            time.sleep(5)
 
         self.GOODS_PER_MESSAGE = 5  # amount of customer's goods shows in one message.
+        self.GOODS_DATA_LOCATION = './goods_data.json'
+        self.USERS_STORES_LOCATION = './users_stores.json'
 
         self.user_pos = {}
         self.first_time = True
 
-        if os.path.isfile('./good_urls.json'):
-            with open("good_urls.json", "r") as f:
-                self.json_goods_data = json.load(f)
-        else:
-            self.json_goods_data = {}
-
-        if os.path.isfile('./users_stores.json'):
-            with open("users_stores.json", "r") as f:
-                self.users_stores = json.load(f)
-        else:
-            self.users_stores = {}
+        self.json_goods_data = filesoper.read_json(self.GOODS_DATA_LOCATION)
+        self.users_stores = filesoper.read_json(self.USERS_STORES_LOCATION)
 
         dp = updater.dispatcher
 
@@ -123,15 +122,15 @@ class LentaBot:
         store_handler = ConversationHandler(
             entry_points=[CommandHandler(['start', 'choose_store'], self.type_city_request)],
             states={
-                CITY:            [MessageHandler(Filters.text, self.search_city)],
+                CITY:            [MessageHandler(Filters.text, self.check_city_req)],
                 TYPE_STORE_NAME: [CallbackQueryHandler(self.type_store_request)],
-                CHOOSE_STORE:    [MessageHandler(Filters.text, self.search_store)],
-                CHOICE_FIN:      [CallbackQueryHandler(self.choose_end, pattern="^" + "\d{4}"+"$")]
+                CHOOSE_STORE:    [MessageHandler(Filters.text, self.check_store_req)],
+                CHOICE_FIN:      [CallbackQueryHandler(self.choose_end, pattern="^" + "\d{4}" + "$")]
             },
             fallbacks=[CommandHandler('choose_store', self.type_city_request)]
         )
 
-        dp.add_handler(CommandHandler('help', self.manual))
+        dp.add_handler(CommandHandler('help', replies.manual_msg))
         dp.add_handler(CommandHandler('my_store', self.check_user_store))
 
         dp.add_handler(store_handler)
@@ -139,41 +138,11 @@ class LentaBot:
 
         dp.add_handler(MessageHandler(Filters.text, self.main))
 
-        dp.add_error_handler(self.error)
+        # dp.add_error_handler(self.error)
         updater.start_polling()
         updater.idle()
 
-    def manual(self, update, context):
-        context.bot.send_message(update.message.chat_id,
-                                 text=u'\tДля начала нужно выбрать магазин, ' \
-                                 'цены которого вы собираетесь отслеживать.\n\n'
-                                 '\tСкопируйте ссылку на товар из каталога ленты и вставьте сюда.\n'
-                                 'Когда цена на данный товар снизится, Бот Вас уведомит об этом.')
-
-    def get_json_from_url(self, url):
-        """
-        For self.stores_dict and self.cities_dict jsons
-        """
-        with requests.Session() as s:
-            text_data = s.get(url, headers=self.headers).text
-            data = json.loads(text_data)
-        return data
-
-    def start(self, update, context):
-        """
-        Startup message
-        """
-        context.bot.send_message(update.message.chat_id, text=u'скинь ссылку на товар\n'
-                                                              'из каталога: https://lenta.com/catalog ')
-
-    def unknown_command(self, update, context):
-        """
-        When user sends command which listed in handlers. See dp.add_handler.
-        """
-        context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text="Извините, такой команды не существует.\n \
-                                 Посмотрите список существующих команд")
-
+    # inline keyboard
     def build_menu(self, buttons, n_cols, header_buttons=None, footer_buttons=None):
         """
         pattern for creating buttons grid.
@@ -185,6 +154,8 @@ class LentaBot:
             menu.append([footer_buttons])
         return menu
 
+
+    # city/store choose
     def type_city_request(self, update, context):
         context.bot.send_message(
             update.message.chat_id,
@@ -192,38 +163,40 @@ class LentaBot:
         )
         return CITY
 
+    # city/store choose (search req in dict)
     def search_requested(self, required_place, places_dict):
         """
-        Search a city or a store by typing it's name.
+        Search a city or a store by typing it's name or it's short form.
+        required_place: (string) 'Санкт-Петербург' or 'Сан' or 'Выборгский р-н'
+        places_dict: (dict)
+            {"id":"spb",
+             "name":"Санкт-Петербург",
+             "lat":59.939095,
+             "long":30.315868,
+             "mediumStoreConcentration":true,
+             "highStoreConcentration":true
+            }...
         """
-        logger.info("search: message is %s", required_place)
-        required_places = {}
+        logger.debug("search_requested: required_place is %s", required_place)
+        relevant_places = {}
         for num, city in enumerate(places_dict):
             if required_place.lower() in places_dict[num]['name'].lower():
-                required_places.update({num: places_dict[num]})
-        logger.info("search: dict is %s", required_places)
-        if len(required_places) == 0:
-            logger.info("not found")
-            return None
-        return required_places
+                relevant_places.update({num: places_dict[num]})
+        return relevant_places
 
-    def search_city(self, update, context):
+    # city/store choose
+    def check_city_req(self, update, context):
         message_text = update.message.text
-        logger.info("search city message is %s", message_text)
+        logger.info("kearch_city: message_text is %s", message_text)
         required_cities = self.search_requested(message_text, self.cities_dict)
-        if required_cities is not None:
-            self.choose_city(update, context, required_cities)
-            return TYPE_STORE_NAME
-        else:
-            self.request_not_found(update, context)
+        if not required_cities:
+            replies.request_not_found_msg(update, context)
             return ConversationHandler.END
 
-    def request_not_found(self, update, context):
-        context.bot.send_message(
-            update.message.chat_id,
-            text="По Вашему запросу ничего не найдено."
-        )
+        self.choose_city(update, context, required_cities)
+        return TYPE_STORE_NAME
 
+    # city/store choose (inline)
     def choose_city(self, update, context, cities_dict=None):
         """
         Buttons with option to choose your city from list.
@@ -244,6 +217,7 @@ class LentaBot:
         update.message.reply_text('Выбирите город', reply_markup=reply_markup)
         return TYPE_STORE_NAME
 
+    # city/store choose
     def type_store_request(self, update, context):
         query = update.callback_query
         logger.info("type store request")
@@ -254,30 +228,26 @@ class LentaBot:
         )
         return CHOOSE_STORE
 
-    def search_store(self, update, context):
+    # city/store choose
+    def check_store_req(self, update, context):
         message_text = update.message.text
         required_stores = self.search_requested(message_text, self.stores_dict)
-        if required_stores is not None:
-            self.choose_store(update, context, required_stores)
-            return CHOICE_FIN
-        else:
-            self.request_not_found(update, context)
+        if not required_stores:
+            replies.request_not_found_msg(update, context)
             return ConversationHandler.END
 
+        self.choose_store(update, context, required_stores)
+        return CHOICE_FIN
+
+    # city/store choose
     def choose_store(self, update, context, stores_dict=None):
         """
         Buttons with option to choose your store from list.
         """
-        # logger.info("choose store: %s", "started")
         stores_dict = stores_dict if stores_dict else self.stores_dict
-        # logger.info("choose store: dict is  %s", stores_dict)
-        # query = update.callback_query
-        # query = update.message
         button_list = []
 
         for store in stores_dict:
-            logger.info("choose store: name is  %s", store)
-            logger.info("choose store: NAME is  %s", stores_dict[store]['name'])
             name = stores_dict[store]["name"]
             store_id = stores_dict[store]["id"]
             button_list.append(InlineKeyboardButton(name, callback_data=store_id))
@@ -290,6 +260,7 @@ class LentaBot:
             reply_markup=reply_markup
         )
 
+    # city/store choose
     def choose_end(self, update, context):
         """
         Remove buttons after choosing a store.
@@ -299,12 +270,11 @@ class LentaBot:
         for lists in query.message.reply_markup.inline_keyboard:
             for element in lists:
                 if query.data in element['callback_data']:
-                    logger.info("test")
                     store_name = element["text"]
                     break
 
-        self.users_stores = {str(query.message.chat_id): [query.data, store_name]}
-        self.save_users_stores()
+        self.users_stores = {query.message.chat_id: [query.data, store_name]}
+        filesoper.write_json(self.users_stores, self.USERS_STORES_LOCATION)
 
         bot = context.bot
         bot.edit_message_text(
@@ -312,129 +282,16 @@ class LentaBot:
             message_id=query.message.message_id,
             text="Ваш магазин '%s'\nСкиньте ссылку на товар" % store_name
         )
+        return ConversationHandler.END
 
-    def save_users_stores(self):
-        """
-        Saves storeId and Store name from dict self.users_stores
-        into users_stores.json.
-        """
-        with open("users_stores.json", "w") as f:
-            json.dump(self.users_stores, f, ensure_ascii=False, indent=4)
 
-    def save_json_goods_data_in_file(self):
-        """
-        Saves all info about goods by their appliers.
-        "user1_id": {
-                    url1: {
-                            "title":str,
-                            "price":int,
-                            "isPromoForCardPrice": bool,
-                            "promoDate": str,
-                            "repeatNotif": bool
-                            },
-                    url2: {...}
-        "user2_id": {...}
-        """
-        with open("good_urls.json", "w") as f:
-            json.dump(self.json_goods_data, f, ensure_ascii=False, indent=4)
-
-    def check_user_store(self, update, context):
-        """ Check your current store name """
-
-        if str(update.message.chat_id) not in self.users_stores:
-            store = "Не определён. Выберите его /choose"
-        else:
-            store = self.users_stores[str(update.message.chat_id)][1]  # get store name from dict
-        text = "Ваш магазин - %s" % (store)
-        context.bot.send_message(update.message.chat_id, text=text)
-
-    def setInterval(interval):
-        """ decorator for periodic checking price """
-        def decorator(function):
-            def wrapper(*args, **kwargs):
-                stopped = threading.Event()
-
-                def loop():  # executed in another thread
-                    while not stopped.wait(interval):  # until stopped
-                        function(*args, **kwargs)
-
-                t = threading.Thread(target=loop)
-                t.daemon = True  # stop if the program exits
-                t.start()
-                return stopped
-            return wrapper
-        return decorator
-
-    def add_store_in_url(self, user_id, url):
-        """
-        Removes storeId from url if exists.
-        Place user's store in the end of the url.
-        """
-
-        clear_url = url.rsplit('?', 1)[0]
-        store_id = self.users_stores.get(user_id, ["0005"])[0]  # get store id
-        url_with_store_id = clear_url + "?StoreId=" + store_id
-        return url_with_store_id
-
-    def take_page_text(self, url, user_id):
-        """
-        Requests a page by given url.
-        Returns html in text format.
-        """
-        session = requests.Session()
-        page_text = session.get(url, headers=self.headers).text
-        return page_text
-
-    def get_new_good_info(self, page_text):
-        """
-        Parses html and gets good info.
-        Returns Good name, price(with promocard),
-        promo state, promo period(с 23.03 по 01.04)
-        """
-        soup = BeautifulSoup(page_text, 'html.parser')
-        good_info = soup.find("div", class_="sku-page-control-container sku-page__control")
-        if good_info is None:
-            return None
-
-        good_info = good_info.attrs.get("data-model")
-
-        price = int(json.loads(good_info)['cardPrice']['integerPart'])
-        title = json.loads(good_info)['title']
-        isPromoForCardPrice = json.loads(good_info)['isPromoForCardPrice']
-        if isPromoForCardPrice:
-            promoStart = ".".join(json.loads(good_info)['promoStart'][:10].split("-")[::-1][:2])
-            promoEnd = ".".join(json.loads(good_info)['promoEnd'][:10].split("-")[::-1][:2])
-            promoDate = "с %s по %s" % (promoStart, promoEnd)
-        else:
-            promoDate = ""
-
-        return {"title": title, "price": price, "isPromoForCardPrice": isPromoForCardPrice, "promoDate": promoDate}
-
-    def update_goods_data(self, user_id, url, good_info, repeatNotif=True):
-
-        """
-        Save current good info in self.json_goods_data
-        Calls save data in file function.
-        """
-        title = good_info["title"]
-        price = good_info["price"]
-        isPromoForCardPrice = good_info["isPromoForCardPrice"]
-        promoDate = good_info["promoDate"]
-        self.json_goods_data.setdefault(user_id, {})
-        self.json_goods_data[user_id].update({url: {"title": title,
-                                                    "price": price,
-                                                    "isPromoForCardPrice": isPromoForCardPrice,
-                                                    "promoDate": promoDate,
-                                                    "repeatNotif": repeatNotif}})
-
-        self.save_json_goods_data_in_file()
-
+    # user's goods inline
     def back_arrow(self, update, context):
         """
         Create back arrow buton.
         """
         query = update.callback_query
-        user_id = str(query.message.chat_id)
+        user_id = query.message.chat_id
         new_pos = self.user_pos[user_id] - self.GOODS_PER_MESSAGE
 
         if new_pos >= 0:
@@ -444,17 +301,19 @@ class LentaBot:
 
         self.send_user_goods(update, context)
 
+    # user's goods inline
     def forward_arrow(self, update, context):
         """
         Create forward arrow buton.
         """
         query = update.callback_query
-        user_id = str(query.message.chat_id)
+        user_id = query.message.chat_id
         new_pos = self.user_pos[user_id] + self.GOODS_PER_MESSAGE
         if len(self.json_goods_data[user_id]) > new_pos:
             self.user_pos[user_id] = new_pos
         self.send_user_goods(update, context)
 
+    # user's goods inline
     def make_arrows_list(self, update, context):
         """
         Combine arrows and exit button in inline keyboard.
@@ -468,16 +327,18 @@ class LentaBot:
                        InlineKeyboardButton(right_arrow, callback_data="next")]
         return arrows_list
 
-    def del_buttons_list(self, update, context):
+    # user's goods inline
+    def create_inline_del_buttons(self, update, context):
         """
         Create crosses in the bottom of inline keyboard.
         Link them to their goods.
+        Return: [list] InlineKeyboard
         """
         query = update.callback_query
         if query is not None:
-            user_id = str(query.message.chat_id)
+            user_id = query.message.chat_id
         else:
-            user_id = str(update.message.chat_id)
+            user_id = update.message.chat_id
         del_buttons_list = []
 
         start = self.user_pos[user_id]
@@ -495,15 +356,16 @@ class LentaBot:
             del_buttons_list.append(InlineKeyboardButton(num + " " + u"\u274C", callback_data=callback))
         return del_buttons_list
 
+    # user's goods inline
     def goods_text(self, update, context):
         """
         Creates text from goods' names, links, and their amount.
         """
         query = update.callback_query
         if query is not None:
-            user_id = str(query.message.chat_id)
+            user_id = query.message.chat_id
         else:
-            user_id = str(update.message.chat_id)
+            user_id = update.message.chat_id
         goods_text = ""
 
         start = self.user_pos[user_id]
@@ -525,22 +387,24 @@ class LentaBot:
 
             goods_text = goods_text + str(num + 1) + ". " \
                                     + '<a href=' + '"' + url + '"' + '>' + title + '</a> ' \
-                                   + " тек. ц: " + str(price) + ' р. ' + promoDate + "\n"
+                                    + " тек. ц: " + str(price) + ' р. ' + promoDate + "\n"
 
         if goods_text == "":
             return None
         goods_text = title_page_text_num + goods_text
         return goods_text
 
+    # user's goods inline
     def create_goods_keyboard(self, update, context):
         """
         Combine delete buttons, arrow buttons, and text
         """
-        del_buttons = self.build_menu(self.del_buttons_list(update, context), n_cols=5)
+        del_buttons = self.build_menu(self.create_inline_del_buttons(update, context), n_cols=5)
         del_buttons.append(self.make_arrows_list(update, context))
         reply_markup = InlineKeyboardMarkup(del_buttons)
         return reply_markup
 
+    # user's goods inline
     def send_user_goods(self, update, context):
         """
         When /goods command received.
@@ -549,9 +413,9 @@ class LentaBot:
         query = update.callback_query
 
         if query is not None:
-            user_id = str(query.message.chat_id)
+            user_id = query.message.chat_id
         else:
-            user_id = str(update.message.chat_id)
+            user_id = update.message.chat_id
             self.user_pos[user_id] = 0
 
         self.user_pos.setdefault(user_id, 0)
@@ -577,11 +441,12 @@ class LentaBot:
                                               reply_markup=reply_markup,
                                               disable_web_page_preview=True,
                                               parse_mode='HTML')
-            except telegram.error.BadRequest: # if there is no message to edit
+            except telegram.error.BadRequest:  # if there is no message to edit
                 context.bot.answer_callback_query(update.callback_query.id,
                                                   text="there's no {} page.".format(query.data))
         return GOOD_LIST
 
+    # user's goods inline
     def confirm_del_action_keyboard(self, update, context):
         """
         Buttons to confirm or reject deleting good from your list.
@@ -602,6 +467,7 @@ class LentaBot:
                                       reply_markup=reply_markup)
         return DELGOOD
 
+    # user's goods inline
     def handle_back_to_list(self, update, context):
         """
         Go back to goods list with inline keyboard after deletion a good.
@@ -609,24 +475,26 @@ class LentaBot:
         self.send_user_goods(update, context)
         return GOOD_LIST
 
+    # user's goods inline
     def handle_del_good(self, update, context):
         """
         Deleting good from json_goods_data.
         After delete confirmation.
         """
         query = update.callback_query
-        user_id = str(query.message.chat_id)
+        user_id = query.message.chat_id
 
         url_part = query.data
         for url in self.json_goods_data[user_id]:
             if url_part in url:
                 del self.json_goods_data[user_id][url]
-                self.save_json_goods_data_in_file()
+                filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
                 break
 
         self.send_user_goods(update, context)
         return GOOD_LIST
 
+    # user's goods inline
     def good_handler_end(self, update, context):
         """
         Replace inline keyboard and goods info with default phrase.
@@ -641,57 +509,138 @@ class LentaBot:
 
         return ConversationHandler.END
 
-    @setInterval(CHECK_PRICE_PERIOD * 60)
-    def checking_for_sales(self, update, context):
+    # check store.
+    def check_user_store(self, update, context):
+        """ Check your current store name """
+
+        if update.message.chat_id not in self.users_stores:
+            store = "Не определён. Выберите его /choose_store"
+        else:
+            store = self.users_stores[update.message.chat_id][1]  # get store name from dict
+        text = "Ваш магазин - %s" % (store)
+        context.bot.send_message(update.message.chat_id, text=text)
+
+    # url append store num
+    def add_store_in_url(self, user_id, url):
         """
-        Checks every good for every user.
-        Sends message if sale is found.
-        Toggles the isPromoForCardPrice and repeatNotif flags.
+        Removes storeId from url if exists.
+        Place user's store in the end of the url.
         """
-        logger.info("checking for sales: %s", "checking")
+
+        clear_url = url.rsplit('?', 1)[0]
+        store_id = self.users_stores.get(user_id, ["0005"])[0]  # get store id
+        url_with_store_id = clear_url + "?StoreId=" + store_id
+        return url_with_store_id
+
+    # change goods info
+    def update_goods_data(self, user_id, url, good_info, repeatNotif=True):
+        """
+        Save current good info (or updates it's state) in self.json_goods_data
+        Calls save data in file function.
+        """
+        title = good_info["title"]
+        price = good_info["price"]
+        isPromoForCardPrice = good_info["isPromoForCardPrice"]
+        promoDate = good_info["promoDate"]
+        self.json_goods_data.setdefault(user_id, {})
+        self.json_goods_data[user_id].update({url: {"title": title,
+                                                    "price": price,
+                                                    "isPromoForCardPrice": isPromoForCardPrice,
+                                                    "promoDate": promoDate,
+                                                    "repeatNotif": repeatNotif}})
+
+
+    # check discounts interval decorator.
+    def setInterval(interval):
+        """ decorator for periodic checking price """
+        def decorator(function):
+            def wrapper(*args, **kwargs):
+                stopped = threading.Event()
+
+                def loop():  # executed in another thread
+                    while not stopped.wait(interval):  # until stopped
+                        function(*args, **kwargs)
+
+                t = threading.Thread(target=loop)
+                t.daemon = True  # stop if the program exits
+                t.start()
+                return stopped
+            return wrapper
+        return decorator
+
+    @setInterval(CHECK_PRICE_PERIOD * 60)  # seconds *  60(minutes)
+    def check_discount_cycle(self, context):
+        for user_id, url in self.iter_goods():
+            new_good_info = self.get_new_good_info(url)
+            if new_good_info == "not_available":
+                break
+            if new_good_info == "not_found":
+                self.good_not_found(context, user_id, url)
+                break
+
+            if self.check_discount(new_good_info):
+                if self.check_discount_relevance(user_id, url):
+                    self.new_discount(user_id, url, new_good_info)
+                else:
+                    self.old_discount(user_id, url, new_good_info)
+
+    def iter_goods(self):
         for user_id in list(self.json_goods_data.keys()):
             for url in list(self.json_goods_data[user_id].keys()):
-                try:
-                    logger.warning(url)
-                    page_text = self.take_page_text(url, user_id)
-                    new_good_info = self.get_new_good_info(page_text)
-                    if new_good_info:
-                        repeatNotif = self.json_goods_data[user_id][url]["repeatNotif"]
-                        prev_isPromoForCardPrice = self.json_goods_data[user_id][url]["isPromoForCardPrice"]
-                        isPromoForCardPrice = new_good_info["isPromoForCardPrice"]
-                        if isPromoForCardPrice and repeatNotif:  # new sale avaliable
-                            logger.warning("sale!!!")
-                            try:
-                                self.update_goods_data(user_id, url, new_good_info, repeatNotif=False)
-                                context.bot.send_message(chat_id=int(user_id),
-                                                         text=u"скидка на %s \n"
-                                                              "Текущая цена: %s \n"
-                                                              "Действительна %s" % (new_good_info["title"],
-                                                                                    new_good_info["price"],
-                                                                                    new_good_info["promoDate"]))
-                            except telegram.error.BadRequest:
-                                logger.warning("User closed messages")
+                yield user_id, url
 
-                        elif isPromoForCardPrice != prev_isPromoForCardPrice and isPromoForCardPrice is False:
-                            self.update_goods_data(user_id, url, new_good_info, repeatNotif=True)
-                            # {"title": title, "price": price, "promoDate": "", "isPromoForCardPrice": False}
-                    else:
-                        logger.debug(url)
-                        good_title = self.json_goods_data[user_id][url]["title"]
-                        losted_good_info = {"title": good_title + " ТОВАР ПРОПАЛ!", "price": 0, "promoDate": "", "isPromoForCardPrice": False}
-                        self.update_goods_data(user_id, url, losted_good_info)
-                        context.bot.send_message(chat_id=int(user_id),
-                                                 text=f'Товар "{good_title}" пропал с сайта.\n'
-                                                       'Проверьте, что ссылка ещё действительна.')
-                except Exception:
-                    logger.exception("message")
+    def get_new_good_info(self, url):
+        response = lenta_api.get_response(url, self.HEADERS)
+        response_status = response.status_code
+        response_text = response.text
+        logger.debug("response_status: %d ", response_status)
+        if response_status == 502 or response_status == 500:
+            return "not_available"
+        elif response_status == 404:
+            return "not_found"
+        return lenta_api.fetch_good_info(response_text)
 
-    def not_valid(self, update, context):
+    def check_discount_relevance(self, user_id, url):
+        repeatNotif = self.json_goods_data[user_id][url]["repeatNotif"]
+        # prev_isPromoForCardPrice = self.json_goods_data[user_id][url]["isPromoForCardPrice"]
+        return repeatNotif
+
+    # check discounts
+    def check_discount(self, new_good_info):
         """
-        Send error message to user if url is wrong.
+        Checks every good for every user.
+        Sends message if disount is found.
+        Toggles the isPromoForCardPrice and repeatNotif flags.
         """
-        context.bot.send_message(update.message.chat_id, text=u'данная ссылка не является каталогом ленты\n'
-                                                              'каталог: https://lenta.com/catalog')
+        if new_good_info:
+            isPromoForCardPrice = new_good_info["isPromoForCardPrice"]
+            if isPromoForCardPrice:  # disount avaliable
+                return True
+
+    def new_discount(self, context, user_id, url, new_good_info):
+        self.update_goods_data(user_id, url, new_good_info, repeatNotif=False)
+        filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
+        title = new_good_info['title']
+        price = new_good_info['price']
+        promoDate = new_good_info['pomoDate']
+        try:
+            replies.new_discount_msg(context, user_id, title, price, promoDate)
+        except telegram.error.BadRequest:
+            logger.error("The User has blocked the Bot!")
+
+    def old_discount(self, user_id, url, new_good_info):
+        self.update_goods_data(user_id, url, new_good_info, repeatNotif=True)
+        filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
+
+    def good_not_found(self, context, user_id, url):
+        good_title = self.json_goods_data[user_id][url]["title"]
+        not_fount_phrase = ". Ссылка на товар больше не действительна!"
+        if not_fount_phrase in good_title:  # already notified about this issue.
+            return
+        replies.good_not_found_msg(context, user_id, good_title)
+        losted_good_info = {"title": good_title + not_fount_phrase, "price": 0, "promoDate": "", "isPromoForCardPrice": False}
+        self.update_goods_data(user_id, url, losted_good_info)
+        filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
 
     def main(self, update, context):
         """
@@ -700,14 +649,15 @@ class LentaBot:
         Saves this link and good info.
         """
         url = update.message.text
-        user_id = str(update.message.chat_id)
+        user_id = update.message.chat_id
 
         if self.first_time is True:
             self.first_time = False
-            self.checking_for_sales(update, context)
+            # logger.debug(self.json_goods_data)
+            self.check_discount_cycle(context)
 
         if not url.startswith(SITE_WHITELIST[0]):
-            self.not_valid(update, context)
+            replies.not_valid_msg(update, context)
             return
 
         if (user_id in self.json_goods_data) and (url in self.json_goods_data[user_id]):
@@ -715,12 +665,12 @@ class LentaBot:
             return
 
         url = self.add_store_in_url(user_id, url)
-        page_text = self.take_page_text(url, user_id)
-        good_info = self.get_new_good_info(page_text)
-        if good_info is None:
-            self.not_valid(update, context)
+        good_info = self.get_new_good_info(url)
+        if not good_info:
+            replies.not_valid_msg(update, context)
             return
         self.update_goods_data(user_id, url, good_info)
+        filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
 
         context.bot.send_message(update.message.chat_id, text="%s по цене %s руб добавлено" % (good_info["title"], good_info["price"]))
 
@@ -728,7 +678,7 @@ class LentaBot:
         """
         Error handler.
         """
-        logger.error('Update "%s" caused error "%s"'% (update, context.error))
+        logger.error('Update "%s" caused error "%s"' % (update, context.error))
 
 
 if __name__ == '__main__':

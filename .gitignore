@@ -1,6 +1,8 @@
 env/
 dev/
-good_urls.json
+goods_data.json
 users_stores.json
 logs/
 .*
+__pycache__
+__idea__
