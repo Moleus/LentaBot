@@ -38,8 +38,6 @@ def fetch_good_info(page_text):
     title = json.loads(good_info)['title']
     isPromoForCardPrice = json.loads(good_info)['isPromoForCardPrice']
     if isPromoForCardPrice:
-        print(json.loads(good_info)['promoStart'])
-        print(json.loads(good_info)['promoEnd'])
         # promoStart
         promo_start_string = json.loads(good_info)['promoStart']
         promo_start_list = promo_start_string[5:10].split("-")
@@ -50,10 +48,7 @@ def fetch_good_info(page_text):
         promo_end_list = promo_end_string[5:10].split("-")
         promo_end_list.reverse()
         promo_end = ".".join(promo_end_list)
-        # promoEnd = "".join((json.loads(good_info)['promoEnd'][5:10].replace("-", ".")).reverse())
-        print(promo_start)
-        print(promo_end)
-
+        # final string
         promoDate = "с %s по %s" % (promo_start, promo_end)
     else:
         promoDate = ""
