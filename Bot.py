@@ -36,7 +36,7 @@ SITE_WHITELIST = [
     'https://lenta.com/catalog/'
 ]
 USE_PROXY = False
-CHECK_PRICE_PERIOD = 300  # minutes
+CHECK_PRICE_PERIOD = 500  # minutes
 CITY, TYPE_STORE_NAME, CHOOSE_STORE, CHOICE_FIN = range(4)
 GOOD_LIST, DELGOOD = range(2)
 
@@ -45,7 +45,7 @@ logFormatter = logging.Formatter("%(asctime)s - [%(threadName)-12.12s] - [%(leve
 logger = logging.getLogger()
 
 # logging level ('INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL/FATAL')
-logger.setLevel('DEBUG')
+logger.setLevel('INFO')
 
 # save logs in ./logs dir.
 if not os.path.isdir('./logs'):
@@ -202,8 +202,6 @@ class LentaBot:
         Buttons with option to choose your city from list.
         """
         cities_dict = cities_dict if cities_dict else self.cities_dict
-        # logger.info("choose city: cities_dict is %s", cities_dict)
-        # logger.info("choose city: %s %s", "message is", update.message.text)
         button_list = []
         for city in cities_dict:
             logger.info("choose city: %s", city)
@@ -567,21 +565,31 @@ class LentaBot:
             return wrapper
         return decorator
 
-    @setInterval(CHECK_PRICE_PERIOD * 60)  # seconds *  60(minutes)
+    @setInterval(CHECK_PRICE_PERIOD * 60)  # seconds *  60 = minutes
     def check_discount_cycle(self, context):
         for user_id, url in self.iter_goods():
             new_good_info = self.get_new_good_info(url)
+            good_title = new_good_info['title']
             if new_good_info == "not_available":
+                logger.info(f"Site is not available! for {title}")
                 break
             if new_good_info == "not_found":
+                logger.info(f"Site is not found for {title}")
                 self.good_not_found(context, user_id, url)
                 break
 
-            if self.check_discount(new_good_info):
-                if self.check_discount_relevance(user_id, url):
-                    self.new_discount(user_id, url, new_good_info)
-                else:
-                    self.old_discount(user_id, url, new_good_info)
+            if not self.is_discount(new_good_info):
+                logger.info(f"No new discounts for {good_title}")
+                self.update_goods_data(user_id, url, new_good_info, repeatNotif=True)
+                filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
+                continue
+
+            if self.is_repeat_notif(user_id, url):
+                logger.info(f"Found old discount for {good_title}")
+                self.old_discount(user_id, url, new_good_info)
+            else:
+                logger.info(f"Found new discount for {good_title}")
+                self.new_discount(user_id, url, new_good_info)
 
     def iter_goods(self):
         for user_id in list(self.json_goods_data.keys()):
@@ -593,28 +601,25 @@ class LentaBot:
         response_status = response.status_code
         response_text = response.text
         logger.debug("response_status: %d ", response_status)
-        if response_status == 502 or response_status == 500:
+        if response_status in (500, 501, 502):
             return "not_available"
         elif response_status == 404:
             return "not_found"
         return lenta_api.fetch_good_info(response_text)
 
-    def check_discount_relevance(self, user_id, url):
+    def is_repeat_notif(self, user_id, url):
         repeatNotif = self.json_goods_data[user_id][url]["repeatNotif"]
         # prev_isPromoForCardPrice = self.json_goods_data[user_id][url]["isPromoForCardPrice"]
         return repeatNotif
 
-    # check discounts
-    def check_discount(self, new_good_info):
+    def is_discount(self, new_good_info):
         """
-        Checks every good for every user.
-        Sends message if disount is found.
-        Toggles the isPromoForCardPrice and repeatNotif flags.
+        Returns 'True' if discound is found.
         """
-        if new_good_info:
-            isPromoForCardPrice = new_good_info["isPromoForCardPrice"]
-            if isPromoForCardPrice:  # disount avaliable
-                return True
+        isPromoForCardPrice = new_good_info["isPromoForCardPrice"]
+        if isPromoForCardPrice:  # disount avaliable
+            return True
+        return False
 
     def new_discount(self, context, user_id, url, new_good_info):
         self.update_goods_data(user_id, url, new_good_info, repeatNotif=False)
@@ -628,8 +633,7 @@ class LentaBot:
             logger.error("The User has blocked the Bot!")
 
     def old_discount(self, user_id, url, new_good_info):
-        self.update_goods_data(user_id, url, new_good_info, repeatNotif=True)
-        filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
+        self.update_goods_data(user_id, url, new_good_info, repeatNotif=True), filesoper.write_json(self.json_goods_data, self.GOODS_DATA_LOCATION)
 
     def good_not_found(self, context, user_id, url):
         good_title = self.json_goods_data[user_id][url]["title"]
@@ -652,7 +656,7 @@ class LentaBot:
 
         if self.first_time is True:
             self.first_time = False
-            # logger.debug(self.json_goods_data)
+            logger.info("check discount init")
             self.check_discount_cycle(context)
 
         if not url.startswith(SITE_WHITELIST[0]):
