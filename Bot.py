@@ -33,7 +33,7 @@ load_dotenv()
 
 
 SITE_WHITELIST = [
-    'https://lenta.com/catalog/'
+    'https://lenta.com/product/'
 ]
 USE_PROXY = False
 CHECK_PRICE_PERIOD = 500  # minutes
@@ -138,7 +138,7 @@ class LentaBot:
 
         dp.add_handler(MessageHandler(Filters.text, self.main))
 
-        # dp.add_error_handler(self.error)
+        dp.add_error_handler(self.error_handler)
         updater.start_polling()
         updater.idle()
 
@@ -571,10 +571,10 @@ class LentaBot:
             new_good_info = self.get_new_good_info(url)
             good_title = new_good_info['title']
             if new_good_info == "not_available":
-                logger.info(f"Site is not available! for {title}")
+                logger.info(f"Site is not available! for {good_title}")
                 break
             if new_good_info == "not_found":
-                logger.info(f"Site is not found for {title}")
+                logger.info(f"Site is not found for {good_title}")
                 self.good_not_found(context, user_id, url)
                 break
 
@@ -677,7 +677,7 @@ class LentaBot:
 
         context.bot.send_message(update.message.chat_id, text="%s по цене %s руб добавлено" % (good_info["title"], good_info["price"]))
 
-    def error(self, update, context):
+    def error_handler(self, update, context):
         """
         Error handler.
         """
